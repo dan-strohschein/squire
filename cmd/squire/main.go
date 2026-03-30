@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/dan-strohschein/squire/internal/estimate"
+
 	"github.com/dan-strohschein/chisel/edit"
 	"github.com/dan-strohschein/chisel/patch"
 	"github.com/dan-strohschein/chisel/resolve"
@@ -41,6 +43,8 @@ func main() {
 		cmdQuery(args)
 	case "refactor":
 		cmdRefactor(args)
+	case "estimate":
+		cmdEstimate(args)
 	case "install":
 		cmdInstall(args)
 	case "upgrade":
@@ -505,6 +509,162 @@ func cmdRefactor(args []string) {
 	}
 }
 
+func cmdEstimate(args []string) {
+	aidDir := detect.FindAidocs(".")
+	if aidDir == "" {
+		fmt.Fprintf(os.Stderr, "Error: no .aidocs/ directory found. Run `squire init` first.\n")
+		os.Exit(1)
+	}
+
+	// Parse flags
+	var planPath string
+	var symbolsFlag string
+	var formatFlag string
+	var positional []string
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--plan":
+			if i+1 < len(args) {
+				i++
+				planPath = args[i]
+			}
+		case "--symbols":
+			if i+1 < len(args) {
+				i++
+				symbolsFlag = args[i]
+			}
+		case "--format":
+			if i+1 < len(args) {
+				i++
+				formatFlag = args[i]
+			}
+		default:
+			if !strings.HasPrefix(args[i], "-") {
+				positional = append(positional, args[i])
+			}
+		}
+	}
+
+	var result *estimate.EstimateResult
+	var err error
+
+	if planPath != "" {
+		fmt.Println("Analyzing plan...")
+		result, err = estimate.FromPlan(aidDir, planPath)
+	} else {
+		// Collect symbols from --symbols flag and positional args
+		var symbols []string
+		if symbolsFlag != "" {
+			for _, s := range strings.Split(symbolsFlag, ",") {
+				s = strings.TrimSpace(s)
+				if s != "" {
+					symbols = append(symbols, s)
+				}
+			}
+		}
+		symbols = append(symbols, positional...)
+
+		if len(symbols) == 0 {
+			fmt.Fprintf(os.Stderr, "Usage: squire estimate [--plan <file>] [--symbols \"Sym1,Sym2\"] [Symbol1 Symbol2 ...]\n")
+			os.Exit(1)
+		}
+
+		fmt.Println("Analyzing symbols...")
+		result, err = estimate.FromSymbols(aidDir, symbols)
+	}
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if formatFlag == "json" {
+		printEstimateJSON(result)
+	} else {
+		printEstimateHuman(result)
+	}
+}
+
+func printEstimateHuman(r *estimate.EstimateResult) {
+	fmt.Println()
+
+	// Symbols found
+	if len(r.Symbols) > 0 {
+		fmt.Printf("  Symbols found: %d\n", len(r.Symbols))
+		for _, s := range r.Symbols {
+			fmt.Printf("    %s (%s, %s)\n", s.Name, s.Kind, s.Module)
+		}
+	}
+	if len(r.UnmatchedSymbols) > 0 {
+		fmt.Printf("  Not in graph: %s\n", strings.Join(r.UnmatchedSymbols, ", "))
+	}
+	fmt.Println()
+
+	// Impact
+	fmt.Printf("  Impact:\n")
+	fmt.Printf("    Files to modify:      %d\n", r.Files)
+	fmt.Printf("    Functions to change:  %d\n", r.Functions)
+	fmt.Printf("    Packages affected:    %d", r.Packages)
+	if len(r.AffectedModules) > 0 && len(r.AffectedModules) <= 10 {
+		fmt.Printf(" (%s)", strings.Join(r.AffectedModules, ", "))
+	}
+	fmt.Println()
+	if r.TestFiles > 0 {
+		fmt.Printf("    Test files:           %d\n", r.TestFiles)
+	}
+	fmt.Println()
+
+	// Cross-cutting concerns
+	if len(r.ComplexityFactors) > 0 {
+		fmt.Printf("  Cross-cutting concerns:\n")
+		for _, f := range r.ComplexityFactors {
+			fmt.Printf("    ⚠ %s\n", f)
+		}
+		fmt.Println()
+	}
+
+	// Estimate
+	fmt.Printf("  Estimate: %s\n", r.Size)
+}
+
+func printEstimateJSON(r *estimate.EstimateResult) {
+	fmt.Printf("{\n")
+	fmt.Printf("  \"symbols\": [")
+	for i, s := range r.Symbols {
+		if i > 0 {
+			fmt.Printf(", ")
+		}
+		fmt.Printf("{\"name\": %q, \"kind\": %q, \"module\": %q}", s.Name, s.Kind, s.Module)
+	}
+	fmt.Printf("],\n")
+	fmt.Printf("  \"files\": %d,\n", r.Files)
+	fmt.Printf("  \"functions\": %d,\n", r.Functions)
+	fmt.Printf("  \"packages\": %d,\n", r.Packages)
+	fmt.Printf("  \"test_files\": %d,\n", r.TestFiles)
+	fmt.Printf("  \"locks\": %d,\n", r.Locks)
+	fmt.Printf("  \"error_maps\": %d,\n", r.ErrorMaps)
+	fmt.Printf("  \"antipatterns\": %d,\n", r.Antipatterns)
+	fmt.Printf("  \"size\": %q,\n", r.Size)
+	fmt.Printf("  \"affected_modules\": [")
+	for i, m := range r.AffectedModules {
+		if i > 0 {
+			fmt.Printf(", ")
+		}
+		fmt.Printf("%q", m)
+	}
+	fmt.Printf("],\n")
+	fmt.Printf("  \"complexity_factors\": [")
+	for i, f := range r.ComplexityFactors {
+		if i > 0 {
+			fmt.Printf(", ")
+		}
+		fmt.Printf("%q", f)
+	}
+	fmt.Printf("]\n")
+	fmt.Printf("}\n")
+}
+
 func cmdInstall(args []string) {
 	if len(args) == 0 {
 		fmt.Fprintf(os.Stderr, "Usage: squire install <tool>\n\n")
@@ -576,6 +736,11 @@ Usage:
     propagate <fn> <error>          Add error return through callers
     [--apply]                       Actually modify files (default: dry-run)
 
+  squire estimate [args]           Estimate story points from graph analysis
+    --plan <file>                  Extract symbols from an implementation plan
+    --symbols "Sym1,Sym2"          Explicit symbol list
+    Symbol1 Symbol2 ...            Symbols as positional args
+
   squire install <tool>           Install a generator (aid-gen-go, aid-gen-ts, etc.)
   squire upgrade                 Update all installed tools to latest
   squire version                 Show version info
@@ -584,5 +749,7 @@ Examples:
   squire init                    Set up the current Go/TS/Python/C# project
   squire query callstack Serve --up
   squire refactor rename OldName NewName
+  squire estimate --plan plan.md
+  squire estimate Handler NotificationService
 `)
 }
