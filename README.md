@@ -120,16 +120,59 @@ With [L2 enrichment](https://github.com/dan-strohschein/AID-Docs) (AI-assisted, 
 
 Squire auto-detects the language from project markers (`go.mod`, `package.json`, `*.csproj`, `pyproject.toml`). Generators are installed on demand.
 
-## How AI agents use it
+## AI Integration
 
-When you run `squire init`, it creates `.aidocs/AGENTS.md` — a plain markdown file that any AI assistant reads as project context. It tells the agent:
+`squire init` automatically configures your AI tools. It detects which tools you use and installs the right configuration for each:
 
+| AI Tool | What gets installed | How it's detected |
+|---------|-------------------|-------------------|
+| **Claude Code** | `.claude/skills/squire.md` | `.claude/` directory exists |
+| **Cursor** | Appends to `.cursorrules` | `.cursorrules` or `.cursor/` exists |
+| **GitHub Copilot** | `.github/copilot-instructions.md` | `.github/` directory exists |
+| **Any AI tool** | `.aidocs/AGENTS.md` | Always created |
+
+The skill/rules files teach each AI assistant to:
 1. Read `.aidocs/manifest.aid` first for the package map
 2. Read a package's `.aid` file before reading its source code
 3. Use `squire query` to trace dependencies without reading source
 4. Use `squire refactor` for precise codebase-wide changes
 
-This works with **any AI coding tool** that reads project files: Claude Code, Cursor, GitHub Copilot, Windsurf, or any future tool.
+### Manual installation
+
+If `squire init` doesn't detect your AI tool, you can install skills manually. Templates are in the [`skills/`](skills/) directory:
+
+**Claude Code:**
+```bash
+mkdir -p .claude/skills
+cp skills/claude-skill.md .claude/skills/squire.md
+```
+
+**Cursor:**
+```bash
+cat skills/cursorrules.md >> .cursorrules
+```
+
+**GitHub Copilot:**
+```bash
+cp skills/copilot-instructions.md .github/copilot-instructions.md
+```
+
+**Windsurf:**
+```bash
+cp skills/windsurfrules.md .windsurfrules
+```
+
+**Any other tool:** Point it at `.aidocs/AGENTS.md` — it's plain markdown that any LLM can read.
+
+### What the Claude Code skill does
+
+The Claude Code skill (`.claude/skills/squire.md`) triggers automatically when Claude needs to understand code relationships, trace call chains, or refactor. It teaches Claude to:
+
+- Read AID files before source code (reducing token consumption)
+- Use `squire query callstack <fn> --up` to find callers instead of grepping
+- Use `squire query depends <Type>` to trace impact of changes
+- Use `squire refactor rename/move/propagate` for precise codebase-wide changes
+- Run `squire generate` after making changes to keep `.aidocs/` current
 
 ## Incremental updates
 
