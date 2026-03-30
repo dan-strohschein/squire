@@ -36,10 +36,14 @@ type EstimateResult struct {
 	Antipatterns      int
 	Invariants        int
 
-	Size              string // TINY, SMALL, MEDIUM, LARGE, XLARGE
+	Size              string // TINY, SMALL, MEDIUM, LARGE, XLARGE, or UNCLEAR
 
 	AffectedModules   []string
 	ComplexityFactors []string
+
+	// Suggestions are offered when the plan is too vague to estimate.
+	Unclear           bool
+	Suggestions       []string
 }
 
 // FromSymbols estimates complexity from explicit symbol names.
@@ -50,10 +54,41 @@ func FromSymbols(aidDir string, symbols []string) (*EstimateResult, error) {
 	}
 
 	engine := query.NewQueryEngine(g, 20)
-	return analyze(g, engine, symbols, aidDir)
+	result, err := analyze(g, engine, symbols, aidDir)
+	if err != nil {
+		return nil, err
+	}
+
+	// If all symbols were unmatched, mark as unclear
+	if len(result.Symbols) == 0 && len(result.UnmatchedSymbols) > 0 {
+		result.Unclear = true
+		result.Size = "UNCLEAR"
+		// Suggest similar symbols from the graph
+		for _, sym := range result.UnmatchedSymbols {
+			sr, searchErr := engine.Search("*"+sym+"*", "")
+			if searchErr != nil || sr.Total == 0 {
+				continue
+			}
+			seen := map[string]bool{}
+			for _, nodes := range sr.Matches {
+				for _, n := range nodes {
+					if n.Kind == graph.KindModule || n.Kind == graph.KindField || n.Kind == graph.KindConstant {
+						continue
+					}
+					if !seen[n.Name] && len(result.Suggestions) < 10 {
+						seen[n.Name] = true
+						result.Suggestions = append(result.Suggestions, n.Name)
+					}
+				}
+			}
+		}
+	}
+
+	return result, nil
 }
 
 // FromPlan estimates complexity by extracting symbols from a plan file.
+// If no symbols are found, returns an UNCLEAR result with suggestions.
 func FromPlan(aidDir string, planPath string) (*EstimateResult, error) {
 	planBytes, err := os.ReadFile(planPath)
 	if err != nil {
@@ -66,6 +101,11 @@ func FromPlan(aidDir string, planPath string) (*EstimateResult, error) {
 	}
 
 	matches := ExtractSymbols(string(planBytes), g)
+
+	if len(matches) == 0 {
+		return buildUnclearResult(string(planBytes), g), nil
+	}
+
 	symbols := make([]string, len(matches))
 	for i, m := range matches {
 		symbols[i] = m.Name
@@ -73,6 +113,99 @@ func FromPlan(aidDir string, planPath string) (*EstimateResult, error) {
 
 	engine := query.NewQueryEngine(g, 20)
 	return analyze(g, engine, symbols, aidDir)
+}
+
+// buildUnclearResult is returned when a plan is too vague to estimate.
+// It extracts keywords from the plan and suggests matching graph symbols
+// so the user can refine the plan.
+func buildUnclearResult(planText string, g *graph.Graph) *EstimateResult {
+	result := &EstimateResult{
+		Unclear: true,
+		Size:    "UNCLEAR",
+	}
+
+	// Extract keywords that might be domain terms (even if not exact symbol matches)
+	keywords := extractKeywords(planText)
+
+	// For each keyword, search the graph for partial matches
+	engine := query.NewQueryEngine(g, 10)
+	seen := map[string]bool{}
+
+	for _, kw := range keywords {
+		sr, err := engine.Search("*"+kw+"*", "")
+		if err != nil || sr.Total == 0 {
+			continue
+		}
+		// Collect up to 3 suggestions per keyword
+		count := 0
+		for _, nodes := range sr.Matches {
+			for _, n := range nodes {
+				if n.Kind == graph.KindModule || n.Kind == graph.KindField || n.Kind == graph.KindConstant {
+					continue
+				}
+				if !seen[n.Name] {
+					seen[n.Name] = true
+					result.Suggestions = append(result.Suggestions, n.Name)
+					count++
+				}
+				if count >= 3 {
+					break
+				}
+			}
+			if count >= 3 {
+				break
+			}
+		}
+	}
+
+	// Cap total suggestions
+	if len(result.Suggestions) > 10 {
+		result.Suggestions = result.Suggestions[:10]
+	}
+
+	return result
+}
+
+// extractKeywords pulls potential domain terms from plan text.
+// These are words that might partially match symbol names.
+func extractKeywords(text string) []string {
+	var keywords []string
+	seen := map[string]bool{}
+
+	for _, word := range strings.Fields(text) {
+		clean := strings.Trim(word, ".,;:(){}[]\"'`-")
+		clean = strings.ToLower(clean)
+
+		if len(clean) < 4 {
+			continue
+		}
+		if stopWords[clean] {
+			continue
+		}
+		if !seen[clean] {
+			seen[clean] = true
+			keywords = append(keywords, clean)
+		}
+	}
+	return keywords
+}
+
+var stopWords = map[string]bool{
+	"this": true, "that": true, "these": true, "those": true, "with": true,
+	"from": true, "into": true, "will": true, "would": true, "could": true,
+	"should": true, "must": true, "have": true, "been": true, "being": true,
+	"were": true, "they": true, "them": true, "their": true, "what": true,
+	"when": true, "where": true, "which": true, "there": true, "then": true,
+	"than": true, "each": true, "every": true, "some": true, "also": true,
+	"just": true, "only": true, "still": true, "about": true, "after": true,
+	"before": true, "between": true, "through": true, "during": true,
+	"make": true, "need": true, "want": true, "change": true, "update": true,
+	"refactor": true, "clean": true, "improve": true, "implement": true,
+	"file": true, "files": true, "code": true, "plan": true, "step": true,
+	"line": true, "lines": true, "note": true, "todo": true, "like": true,
+	"more": true, "most": true, "much": true, "many": true, "very": true,
+	"because": true, "since": true, "however": true, "although": true,
+	"currently": true, "instead": true, "already": true, "other": true,
 }
 
 func analyze(g *graph.Graph, engine *query.QueryEngine, symbols []string, aidDir string) (*EstimateResult, error) {

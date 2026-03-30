@@ -589,6 +589,11 @@ func cmdEstimate(args []string) {
 func printEstimateHuman(r *estimate.EstimateResult) {
 	fmt.Println()
 
+	if r.Unclear {
+		printUnclearEstimate(r)
+		return
+	}
+
 	// Symbols found
 	if len(r.Symbols) > 0 {
 		fmt.Printf("  Symbols found: %d\n", len(r.Symbols))
@@ -626,6 +631,37 @@ func printEstimateHuman(r *estimate.EstimateResult) {
 
 	// Estimate
 	fmt.Printf("  Estimate: %s\n", r.Size)
+}
+
+func printUnclearEstimate(r *estimate.EstimateResult) {
+	fmt.Printf("  ⚠ Cannot estimate — the plan does not reference specific code symbols.\n\n")
+	fmt.Printf("  A good plan for estimation should name the specific types, functions,\n")
+	fmt.Printf("  or interfaces that will change. For example:\n\n")
+	fmt.Printf("    Estimable:      \"Add an AuditLogger field to NotificationServiceImpl\n")
+	fmt.Printf("                     and call AuditLogger.Log() in DLQRetryJob\"\n\n")
+	fmt.Printf("    Not estimable:  \"Refactor the notification system\"\n\n")
+	fmt.Printf("  The first names specific symbols. The second does not.\n")
+
+	if len(r.UnmatchedSymbols) > 0 {
+		fmt.Printf("\n  Symbols provided but not found in graph: %s\n", strings.Join(r.UnmatchedSymbols, ", "))
+	}
+
+	if len(r.Suggestions) > 0 {
+		fmt.Printf("\n  Possible symbols from your codebase:\n")
+		for _, s := range r.Suggestions {
+			fmt.Printf("    %s\n", s)
+		}
+		fmt.Printf("\n  Try: squire estimate %s\n", strings.Join(r.Suggestions[:min(3, len(r.Suggestions))], " "))
+	} else {
+		fmt.Printf("\n  Run `squire query search \"<keyword>\"` to find relevant symbols.\n")
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func printEstimateJSON(r *estimate.EstimateResult) {
