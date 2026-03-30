@@ -21,8 +21,9 @@ type Project struct {
 
 // PackageInfo describes a single package within the project.
 type PackageInfo struct {
-	Name string
-	Dir  string // relative path from project root
+	Name     string
+	Dir      string // relative path from project root
+	AidName  string // unique name for the .aid file (set by generate)
 }
 
 // Detect analyzes a directory and returns project metadata.

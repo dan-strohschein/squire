@@ -34,34 +34,45 @@ func CheckStaleness(project *detect.Project) (stale, fresh, missing []string, er
 		aidFiles[base] = codeVersion
 	}
 
+	// Build the same unique naming map that generate uses for duplicate package names
+	nameCount := map[string]int{}
+	for _, pkg := range project.Packages {
+		nameCount[pkg.Name]++
+	}
+
 	// For each detected package, check if an .aid file exists
 	for _, pkg := range project.Packages {
-		_, hasAid := aidFiles[pkg.Name]
+		// Compute the expected .aid file name (same logic as generate)
+		aidName := pkg.Name
+		if nameCount[pkg.Name] > 1 {
+			clean := strings.ReplaceAll(pkg.Dir, string(filepath.Separator), "_")
+			clean = strings.TrimPrefix(clean, "internal_")
+			clean = strings.TrimPrefix(clean, "src_internal_")
+			clean = strings.TrimPrefix(clean, "src_")
+			clean = strings.TrimPrefix(clean, "pkg_")
+			aidName = clean
+		}
+
+		codeVersion, hasAid := aidFiles[aidName]
 
 		if !hasAid {
-			missing = append(missing, pkg.Name)
+			missing = append(missing, aidName)
 			continue
 		}
 
-		codeVersion := aidFiles[pkg.Name]
 		if codeVersion == "" {
-			// .aid file exists but no code_version — treat as "generated, not versioned"
-			fresh = append(fresh, pkg.Name)
+			fresh = append(fresh, aidName)
 			continue
 		}
 
-		// Compare against current git hash for this package's directory
 		pkgDir := filepath.Join(project.SourceRoot, pkg.Dir)
 		gitHash := getGitHash(pkgDir)
 
 		if gitHash == "" || gitHash == codeVersion {
-			fresh = append(fresh, pkg.Name)
+			fresh = append(fresh, aidName)
 		} else {
-			stale = append(stale, pkg.Name)
+			stale = append(stale, aidName)
 		}
-
-		// Remove from aidFiles so we can detect orphans later
-		delete(aidFiles, pkg.Name)
 	}
 
 	return stale, fresh, missing, nil

@@ -55,9 +55,38 @@ func generateGo(project *detect.Project) (*Result, error) {
 
 	result := &Result{}
 
+	// Detect duplicate package names and build unique file names.
+	// e.g., audit/handlers → audit_handlers.aid, export/handlers → export_handlers.aid
+	nameCount := map[string]int{}
+	for _, pkg := range project.Packages {
+		nameCount[pkg.Name]++
+	}
+	aidFileName := func(pkg detect.PackageInfo) string {
+		if nameCount[pkg.Name] > 1 {
+			// Use directory path with underscores: internal/audit/handlers → audit_handlers
+			clean := strings.ReplaceAll(pkg.Dir, string(filepath.Separator), "_")
+			clean = strings.TrimPrefix(clean, "internal_")
+			clean = strings.TrimPrefix(clean, "src_internal_")
+			clean = strings.TrimPrefix(clean, "src_")
+			clean = strings.TrimPrefix(clean, "pkg_")
+			return clean
+		}
+		return pkg.Name
+	}
+
+	// Generate each package into a temp directory, then move to final name.
+	// This prevents packages with the same Go name from overwriting each other.
+	tmpDir, err := os.MkdirTemp("", "squire-gen-*")
+	if err != nil {
+		return nil, fmt.Errorf("creating temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
 	for _, pkg := range project.Packages {
 		pkgDir := filepath.Join(project.SourceRoot, pkg.Dir)
-		cmd := exec.Command(genPath, "--output", project.AidDir, pkgDir)
+
+		// Generate into temp dir (aid-gen-go writes <pkgname>.aid)
+		cmd := exec.Command(genPath, "--output", tmpDir, pkgDir)
 		cmd.Stderr = os.Stderr
 
 		if err := cmd.Run(); err != nil {
@@ -65,9 +94,20 @@ func generateGo(project *detect.Project) (*Result, error) {
 			continue
 		}
 
-		// Stamp code_version into the generated .aid file
-		aidPath := filepath.Join(project.AidDir, pkg.Name+".aid")
-		stampCodeVersion(aidPath, pkgDir)
+		// Move from temp to final location with unique name
+		generatedPath := filepath.Join(tmpDir, pkg.Name+".aid")
+		uniqueName := aidFileName(pkg)
+		targetPath := filepath.Join(project.AidDir, uniqueName+".aid")
+
+		if _, err := os.Stat(generatedPath); err == nil {
+			data, readErr := os.ReadFile(generatedPath)
+			if readErr == nil {
+				os.WriteFile(targetPath, data, 0644)
+			}
+			os.Remove(generatedPath) // clean up temp
+		}
+
+		stampCodeVersion(targetPath, pkgDir)
 
 		result.PackagesProcessed++
 		result.FilesGenerated++
