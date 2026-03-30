@@ -177,23 +177,54 @@ squire refactor propagate <function> <error-type>     # add error returns
 
 ## Estimate Effort
 
-When the user asks you to estimate effort, story points, or complexity for a plan or feature, use squire estimate. It analyzes the semantic graph to count affected files, functions, packages, and cross-cutting concerns, then produces a T-shirt size (TINY/SMALL/MEDIUM/LARGE/XLARGE).
+When the user asks you to estimate effort, story points, or complexity for a plan or feature, follow this two-step process:
 
+### Step 1: Validate the plan for specificity BEFORE running squire
+
+Review the plan text and check: does it name specific types, functions, or interfaces that will change? If not, the plan is too vague to estimate. Ask clarifying questions first.
+
+**Signs of a vague plan (DO NOT submit to squire yet):**
+- Uses only general verbs: "refactor", "clean up", "improve", "fix"
+- Refers to systems by domain name only: "the notification system", "the auth module"
+- No specific type names, function names, or interface names mentioned
+- Could mean many different things depending on interpretation
+
+**When the plan is vague, ask questions like:**
+- "You said 'refactor the notification system' — what specifically should change? Are you restructuring the package layout, changing the NotificationService interface, adding new methods, or cleaning up implementations?"
+- "Which types or services are affected? For example, NotificationServiceImpl, DLQRetryJob, PreferencesService?"
+- "Are you adding new fields, changing function signatures, or moving code between packages?"
+- "What's the end state? What should be different after this work is done?"
+
+Use ` + "`" + `squire query search "<keyword>"` + "`" + ` to help the user find relevant symbols:
 ` + "`" + `` + "`" + `` + "`" + `bash
-# From a plan file:
-squire estimate --plan plan.md
-
-# From explicit symbols mentioned in the plan:
-squire estimate SnapshotInfo IsVisibleToSnapshot SetSnapshot
-
-# Machine-readable output:
-squire estimate --plan plan.md --format json
+squire query search "Notification*"    # find notification-related symbols
+squire query list service              # list everything in the service module
 ` + "`" + `` + "`" + `` + "`" + `
 
-When asked to estimate, you can also write the plan to a temp file and pass it:
-1. Write the plan text to a temp file
-2. Run squire estimate --plan <tempfile>
-3. Report the result to the user
+Share the results with the user to help them name the specific things that will change.
+
+### Step 2: Run squire estimate once the plan names specific symbols
+
+Once the plan references concrete code symbols, run the estimate:
+
+` + "`" + `` + "`" + `` + "`" + `bash
+# Option A: Write the plan to a temp file
+squire estimate --plan /tmp/plan.md
+
+# Option B: Pass symbols directly
+squire estimate NotificationServiceImpl DLQRetryJob Handler
+
+# Machine-readable output:
+squire estimate --plan /tmp/plan.md --format json
+` + "`" + `` + "`" + `` + "`" + `
+
+Report the result to the user including:
+- The T-shirt size (TINY/SMALL/MEDIUM/LARGE/XLARGE)
+- Number of affected files, functions, and packages
+- Any cross-cutting concerns (locks, error maps, antipatterns)
+- Specific complexity factors if present
+
+If squire returns UNCLEAR, relay that to the user and go back to Step 1.
 
 ## Strategy
 
