@@ -115,13 +115,19 @@ func cmdInit(args []string) {
 	}
 	fmt.Println()
 
-	// Step 5: Generate AGENTS.md
+	// Step 5: Generate AGENTS.md + AI tool skills
 	fmt.Println("Configuring AI integration...")
 	err = agents.Generate(project, graphStats)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  ⚠ Could not generate AGENTS.md: %v\n", err)
 	} else {
 		fmt.Printf("  ✓ .aidocs/AGENTS.md created\n")
+	}
+
+	// Install skills for detected AI tools
+	installed := agents.InstallSkills(project)
+	for _, s := range installed {
+		fmt.Printf("  ✓ %s\n", s)
 	}
 	fmt.Println()
 

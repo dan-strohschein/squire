@@ -76,6 +76,150 @@ func Generate(project *detect.Project, stats *generate.GraphStats) error {
 	return os.WriteFile(path, []byte(b.String()), 0644)
 }
 
+// InstallSkills detects which AI tools are configured and installs the appropriate skill files.
+func InstallSkills(project *detect.Project) []string {
+	var installed []string
+
+	// Claude Code — install skill if .claude/ exists
+	claudeDir := filepath.Join(project.SourceRoot, ".claude", "skills")
+	if _, err := os.Stat(filepath.Dir(claudeDir)); err == nil {
+		if err := os.MkdirAll(claudeDir, 0755); err == nil {
+			skillPath := filepath.Join(claudeDir, "squire.md")
+			if err := os.WriteFile(skillPath, []byte(claudeSkill), 0644); err == nil {
+				installed = append(installed, ".claude/skills/squire.md")
+			}
+		}
+	}
+
+	// Cursor — install .cursorrules if Cursor config exists or user has .cursorrules already
+	cursorRules := filepath.Join(project.SourceRoot, ".cursorrules")
+	cursorDir := filepath.Join(project.SourceRoot, ".cursor")
+	if _, err := os.Stat(cursorRules); err == nil {
+		// .cursorrules exists — append squire section if not already present
+		existing, _ := os.ReadFile(cursorRules)
+		if !strings.Contains(string(existing), "squire query") {
+			f, err := os.OpenFile(cursorRules, os.O_APPEND|os.O_WRONLY, 0644)
+			if err == nil {
+				f.WriteString("\n\n" + cursorSection)
+				f.Close()
+				installed = append(installed, ".cursorrules (appended)")
+			}
+		}
+	} else if _, err := os.Stat(cursorDir); err == nil {
+		// .cursor/ exists but no .cursorrules — create one
+		if err := os.WriteFile(cursorRules, []byte(cursorSection), 0644); err == nil {
+			installed = append(installed, ".cursorrules (created)")
+		}
+	}
+
+	// GitHub Copilot — install if .github/ exists
+	ghDir := filepath.Join(project.SourceRoot, ".github")
+	if _, err := os.Stat(ghDir); err == nil {
+		copilotPath := filepath.Join(ghDir, "copilot-instructions.md")
+		if _, err := os.Stat(copilotPath); err != nil {
+			// Doesn't exist yet — create it
+			if err := os.WriteFile(copilotPath, []byte(copilotInstructions), 0644); err == nil {
+				installed = append(installed, ".github/copilot-instructions.md")
+			}
+		}
+	}
+
+	return installed
+}
+
+const claudeSkill = `---
+name: squire
+description: Use squire to query the semantic code graph, understand symbol relationships, and perform precise refactoring. Squire embeds AID documentation, Cartograph graph queries, and Chisel refactoring in a single tool.
+trigger: when you need to understand code relationships, trace call chains, find what depends on a symbol, rename/move/propagate changes across a codebase, or when .aidocs/ directory exists in the project
+---
+
+# Squire — AI Code Assistant Toolkit
+
+Squire provides structured codebase documentation (AID files), a semantic graph query engine (Cartograph), and precise refactoring (Chisel) in a single binary.
+
+## When to Use Squire
+
+- **Before reading source code**: Check if .aidocs/ exists. If it does, read the .aid file for the relevant package FIRST.
+- **Tracing dependencies**: Use squire query instead of grepping.
+- **Refactoring**: Use squire refactor instead of manual find-and-replace.
+
+## Read AID Documentation
+
+` + "`" + `` + "`" + `` + "`" + `bash
+cat .aidocs/manifest.aid          # package index
+cat .aidocs/<package>.aid         # package documentation
+` + "`" + `` + "`" + `` + "`" + `
+
+AID files contain: @fn/@sig (signatures), @calls (call graph), @type/@fields (structs), @trait (interfaces), @workflow (data flows), @invariants, @antipatterns, @error_map, @lock.
+
+## Query the Semantic Graph
+
+` + "`" + `` + "`" + `` + "`" + `bash
+squire query callstack <function> --up     # who calls this?
+squire query callstack <function> --down   # what does this call?
+squire query depends <Type>                # what depends on this type?
+squire query search "<pattern>"            # find by name (glob/regex)
+squire query list <module>                 # list everything in a module
+squire query field <Type.Field>            # what touches this field?
+squire query errors <ErrorType>            # what produces this error?
+squire query stats                         # graph statistics
+` + "`" + `` + "`" + `` + "`" + `
+
+## Refactor (dry-run by default)
+
+` + "`" + `` + "`" + `` + "`" + `bash
+squire refactor rename <old> <new>                    # preview rename
+squire refactor rename <old> <new> --apply            # apply rename
+squire refactor move <symbol> <package>               # move symbol
+squire refactor propagate <function> <error-type>     # add error returns
+` + "`" + `` + "`" + `` + "`" + `
+
+## Strategy
+
+1. Read .aidocs/manifest.aid to identify relevant packages
+2. Read the .aid file for each package before source code
+3. Use squire query to trace dependencies
+4. Read source only for implementation details not in AID
+5. After changes, run squire generate to update .aidocs/
+`
+
+const cursorSection = `# Squire — Structured Code Documentation
+
+This project uses .aidocs/ for AI-readable code documentation. Read .aidocs/manifest.aid for the package index. Read a package's .aid file before its source code.
+
+Use squire query for dependency tracing:
+- squire query callstack <function> --up (callers)
+- squire query callstack <function> --down (callees)
+- squire query depends <Type> (dependents)
+- squire query search "<pattern>" (find by name)
+
+Use squire refactor for precise changes (dry-run by default, --apply to modify):
+- squire refactor rename <old> <new>
+- squire refactor move <symbol> <package>
+- squire refactor propagate <fn> <error>
+
+Run squire generate after code changes to update .aidocs/.
+`
+
+const copilotInstructions = `# Squire — Structured Code Documentation
+
+This project uses Squire for AI-readable code documentation in .aidocs/.
+
+## How to Use
+
+1. Read .aidocs/manifest.aid for the package index
+2. Read a package's .aid file before reading its source code
+3. AID files contain: function signatures (@fn), call graphs (@calls), type definitions (@type), workflows (@workflow), invariants (@invariants), antipatterns (@antipatterns), error taxonomy (@error_map), lock ordering (@lock)
+
+## Commands (if terminal available)
+
+- squire query callstack <function> --up — find callers
+- squire query depends <Type> — find dependents
+- squire query search "<pattern>" — find by name
+- squire refactor rename <old> <new> — preview rename
+- squire generate — update .aidocs/ after changes
+`
+
 func detectEntryPoints(project *detect.Project) []string {
 	var entries []string
 	for _, pkg := range project.Packages {
