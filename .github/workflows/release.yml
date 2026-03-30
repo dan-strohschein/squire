@@ -1,0 +1,122 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Compute version
+        id: version
+        run: |
+          LATEST=$(git tag -l 'v*' --sort=-v:refname | head -1)
+          if [ -z "$LATEST" ]; then
+            LATEST="v0.0.0"
+          fi
+
+          MAJOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f1)
+          MINOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f2)
+          PATCH=$(echo "$LATEST" | sed 's/v//' | cut -d. -f3)
+
+          case "${{ inputs.bump }}" in
+            major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR+1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH+1)) ;;
+          esac
+
+          VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build binaries
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          LDFLAGS="-s -w -X github.com/dan-strohschein/squire/internal/version.Version=${VERSION}"
+
+          platforms=(
+            "linux/amd64"
+            "linux/arm64"
+            "darwin/amd64"
+            "darwin/arm64"
+            "windows/amd64"
+            "windows/arm64"
+          )
+
+          mkdir -p dist
+
+          for platform in "${platforms[@]}"; do
+            GOOS="${platform%/*}"
+            GOARCH="${platform#*/}"
+
+            output="squire-${GOOS}-${GOARCH}"
+            if [ "$GOOS" = "windows" ]; then
+              output="${output}.exe"
+            fi
+
+            echo "Building ${output}..."
+            GOOS=$GOOS GOARCH=$GOARCH go build -ldflags "$LDFLAGS" -o "dist/${output}" ./cmd/squire/
+
+            # Create archive
+            cd dist
+            if [ "$GOOS" = "windows" ]; then
+              zip "${output%.exe}.zip" "$output"
+            else
+              tar czf "${output}.tar.gz" "$output"
+            fi
+            cd ..
+          done
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Squire ${{ steps.version.outputs.version }}
+          body: |
+            ## Squire ${{ steps.version.outputs.version }}
+
+            AI code assistant toolkit — unified AID generation, semantic graph queries, and refactoring.
+
+            ### Install
+            ```bash
+            curl -sSL https://raw.githubusercontent.com/dan-strohschein/squire/main/install.sh | sh
+            ```
+
+            Or with Go:
+            ```bash
+            go install github.com/dan-strohschein/squire@${{ steps.version.outputs.version }}
+            ```
+
+            ### What's included
+            - AID L1 generation (delegates to language-specific generators)
+            - Cartograph semantic graph engine (embedded)
+            - Chisel refactoring engine (embedded)
+            - AGENTS.md generation for universal AI integration
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+          generate_release_notes: true
