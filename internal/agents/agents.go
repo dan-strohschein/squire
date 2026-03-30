@@ -129,19 +129,20 @@ func InstallSkills(project *detect.Project) []string {
 
 const claudeSkill = `---
 name: squire
-description: Use squire to query the semantic code graph, understand symbol relationships, and perform precise refactoring. Squire embeds AID documentation, Cartograph graph queries, and Chisel refactoring in a single tool.
-trigger: when you need to understand code relationships, trace call chains, find what depends on a symbol, rename/move/propagate changes across a codebase, or when .aidocs/ directory exists in the project
+description: Use squire to query the semantic code graph, understand symbol relationships, perform precise refactoring, and estimate implementation effort. Squire embeds AID documentation, Cartograph graph queries, and Chisel refactoring in a single tool.
+trigger: when you need to understand code relationships, trace call chains, find what depends on a symbol, rename/move/propagate changes across a codebase, estimate story points or effort for a plan, or when .aidocs/ directory exists in the project
 ---
 
 # Squire — AI Code Assistant Toolkit
 
-Squire provides structured codebase documentation (AID files), a semantic graph query engine (Cartograph), and precise refactoring (Chisel) in a single binary.
+Squire provides structured codebase documentation (AID files), a semantic graph query engine (Cartograph), precise refactoring (Chisel), and effort estimation in a single binary.
 
 ## When to Use Squire
 
 - **Before reading source code**: Check if .aidocs/ exists. If it does, read the .aid file for the relevant package FIRST.
 - **Tracing dependencies**: Use squire query instead of grepping.
 - **Refactoring**: Use squire refactor instead of manual find-and-replace.
+- **Estimating effort**: Use squire estimate to analyze a plan and get a story point size.
 
 ## Read AID Documentation
 
@@ -174,6 +175,26 @@ squire refactor move <symbol> <package>               # move symbol
 squire refactor propagate <function> <error-type>     # add error returns
 ` + "`" + `` + "`" + `` + "`" + `
 
+## Estimate Effort
+
+When the user asks you to estimate effort, story points, or complexity for a plan or feature, use squire estimate. It analyzes the semantic graph to count affected files, functions, packages, and cross-cutting concerns, then produces a T-shirt size (TINY/SMALL/MEDIUM/LARGE/XLARGE).
+
+` + "`" + `` + "`" + `` + "`" + `bash
+# From a plan file:
+squire estimate --plan plan.md
+
+# From explicit symbols mentioned in the plan:
+squire estimate SnapshotInfo IsVisibleToSnapshot SetSnapshot
+
+# Machine-readable output:
+squire estimate --plan plan.md --format json
+` + "`" + `` + "`" + `` + "`" + `
+
+When asked to estimate, you can also write the plan to a temp file and pass it:
+1. Write the plan text to a temp file
+2. Run squire estimate --plan <tempfile>
+3. Report the result to the user
+
 ## Strategy
 
 1. Read .aidocs/manifest.aid to identify relevant packages
@@ -198,6 +219,10 @@ Use squire refactor for precise changes (dry-run by default, --apply to modify):
 - squire refactor move <symbol> <package>
 - squire refactor propagate <fn> <error>
 
+Use squire estimate to size implementation plans:
+- squire estimate --plan plan.md (from a plan file)
+- squire estimate Symbol1 Symbol2 (from explicit symbols)
+
 Run squire generate after code changes to update .aidocs/.
 `
 
@@ -217,6 +242,7 @@ This project uses Squire for AI-readable code documentation in .aidocs/.
 - squire query depends <Type> — find dependents
 - squire query search "<pattern>" — find by name
 - squire refactor rename <old> <new> — preview rename
+- squire estimate --plan plan.md — estimate effort for a plan
 - squire generate — update .aidocs/ after changes
 `
 
