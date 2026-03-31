@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/dan-strohschein/squire/internal/estimate"
+	squiretesting "github.com/dan-strohschein/squire/internal/testing"
 	"github.com/dan-strohschein/squire/internal/impact"
 
 	"github.com/dan-strohschein/chisel/edit"
@@ -44,6 +45,8 @@ func main() {
 		cmdQuery(args)
 	case "refactor":
 		cmdRefactor(args)
+	case "test":
+		cmdTest(args)
 	case "estimate":
 		cmdEstimate(args)
 	case "impact":
@@ -512,6 +515,67 @@ func cmdRefactor(args []string) {
 	}
 }
 
+func cmdTest(args []string) {
+	dir := "."
+	project, err := detect.Detect(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	runner := &squiretesting.Runner{
+		Language:   project.Language,
+		ProjectDir: project.SourceRoot,
+	}
+
+	fmt.Printf("Running %s tests...\n", project.Language)
+
+	result, err := runner.Run(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println()
+
+	// Summary line
+	if result.Failed == 0 && result.Errors == 0 {
+		fmt.Printf("  ✓ %d passed", result.Passed)
+	} else {
+		fmt.Printf("  ✗ %d passed, %d failed", result.Passed, result.Failed+result.Errors)
+	}
+	if result.Skipped > 0 {
+		fmt.Printf(", %d skipped", result.Skipped)
+	}
+	if result.Duration != "" {
+		fmt.Printf(" (%ss)", result.Duration)
+	}
+	fmt.Println()
+
+	// Failures
+	if len(result.Failures) > 0 {
+		fmt.Printf("\n  Failures:\n\n")
+		for _, f := range result.Failures {
+			pkg := f.Package
+			if pkg != "" {
+				pkg = " (" + pkg + ")"
+			}
+			fmt.Printf("    ✗ %s%s\n", f.TestName, pkg)
+			if f.Message != "" {
+				fmt.Printf("      %s\n", f.Message)
+			}
+			if f.SourceRef != "" {
+				fmt.Printf("      → %s\n", f.SourceRef)
+			}
+			fmt.Println()
+		}
+	}
+
+	if result.Failed > 0 || result.Errors > 0 {
+		os.Exit(1)
+	}
+}
+
 func cmdImpact(args []string) {
 	aidDir := detect.FindAidocs(".")
 	if aidDir == "" {
@@ -904,6 +968,7 @@ Usage:
     propagate <fn> <error>          Add error return through callers
     [--apply]                       Actually modify files (default: dry-run)
 
+  squire test [args]               Run tests, show structured failures only
   squire impact [symbols]          Analyze blast radius of changes
     (no args)                      Analyze uncommitted git changes
     --staged                       Analyze staged changes only
