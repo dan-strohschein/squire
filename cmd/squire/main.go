@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/dan-strohschein/squire/internal/estimate"
+	"github.com/dan-strohschein/squire/internal/impact"
 
 	"github.com/dan-strohschein/chisel/edit"
 	"github.com/dan-strohschein/chisel/patch"
@@ -45,6 +46,8 @@ func main() {
 		cmdRefactor(args)
 	case "estimate":
 		cmdEstimate(args)
+	case "impact":
+		cmdImpact(args)
 	case "install":
 		cmdInstall(args)
 	case "upgrade":
@@ -509,6 +512,135 @@ func cmdRefactor(args []string) {
 	}
 }
 
+func cmdImpact(args []string) {
+	aidDir := detect.FindAidocs(".")
+	if aidDir == "" {
+		fmt.Fprintf(os.Stderr, "Error: no .aidocs/ directory found. Run `squire init` first.\n")
+		os.Exit(1)
+	}
+	projectDir := filepath.Dir(aidDir)
+
+	// Parse flags
+	staged := false
+	var symbols []string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--staged":
+			staged = true
+		default:
+			if !strings.HasPrefix(args[i], "-") {
+				symbols = append(symbols, args[i])
+			}
+		}
+	}
+
+	var result *impact.Result
+	var err error
+
+	if len(symbols) > 0 {
+		fmt.Println("Analyzing impact of symbol changes...")
+		result, err = impact.FromSymbols(aidDir, symbols)
+	} else {
+		if staged {
+			fmt.Println("Analyzing impact of staged changes...")
+		} else {
+			fmt.Println("Analyzing impact of uncommitted changes...")
+		}
+		result, err = impact.FromGitDiff(projectDir, aidDir, staged)
+	}
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	printImpactResult(result)
+}
+
+func printImpactResult(r *impact.Result) {
+	fmt.Println()
+
+	// What changed
+	if len(r.ChangedFiles) > 0 {
+		fmt.Printf("  Changed files: %d\n", len(r.ChangedFiles))
+		for _, f := range r.ChangedFiles {
+			fmt.Printf("    %s\n", f)
+		}
+		fmt.Println()
+	}
+
+	if len(r.ChangedSymbols) > 0 {
+		fmt.Printf("  Changed symbols: %d\n", len(r.ChangedSymbols))
+		shown := 0
+		for _, s := range r.ChangedSymbols {
+			if s.Kind == "Function" || s.Kind == "Method" || s.Kind == "Type" || s.Kind == "Trait" {
+				fmt.Printf("    %s (%s, %s)\n", s.Name, s.Kind, s.Module)
+				shown++
+				if shown >= 15 {
+					fmt.Printf("    ... and %d more\n", len(r.ChangedSymbols)-shown)
+					break
+				}
+			}
+		}
+		fmt.Println()
+	}
+
+	// Blast radius
+	fmt.Printf("  Blast radius:\n")
+	fmt.Printf("    Functions affected:  %d\n", r.AffectedFunctions)
+	fmt.Printf("    Packages affected:  %d", len(r.AffectedPackages))
+	if len(r.AffectedPackages) > 0 && len(r.AffectedPackages) <= 10 {
+		fmt.Printf(" (%s)", strings.Join(r.AffectedPackages, ", "))
+	}
+	fmt.Println()
+	fmt.Println()
+
+	// The gap — what you might have missed
+	if len(r.MissedSymbols) == 0 {
+		fmt.Printf("  ✓ No missed dependencies detected. Your changes appear self-contained.\n")
+	} else {
+		fmt.Printf("  ⚠ Potentially missed (%d symbols in %d files outside your changeset):\n\n",
+			len(r.MissedSymbols), len(r.MissedFiles))
+
+		// Group by package
+		byPkg := map[string][]impact.SymbolInfo{}
+		for _, s := range r.MissedSymbols {
+			byPkg[s.Module] = append(byPkg[s.Module], s)
+		}
+
+		for pkg, syms := range byPkg {
+			fmt.Printf("    %s:\n", pkg)
+			shown := 0
+			for _, s := range syms {
+				fmt.Printf("      %s (%s)\n", s.Name, s.Kind)
+				shown++
+				if shown >= 8 {
+					fmt.Printf("      ... and %d more in this package\n", len(syms)-shown)
+					break
+				}
+			}
+		}
+		fmt.Println()
+	}
+
+	// Risk
+	riskIcon := "✓"
+	switch r.Risk {
+	case "MEDIUM":
+		riskIcon = "⚠"
+	case "HIGH":
+		riskIcon = "⚠⚠"
+	case "CRITICAL":
+		riskIcon = "🚨"
+	}
+	fmt.Printf("  Risk: %s %s\n", riskIcon, r.Risk)
+
+	// Warnings
+	for _, w := range r.Warnings {
+		fmt.Printf("  Note: %s\n", w)
+	}
+}
+
 func cmdEstimate(args []string) {
 	aidDir := detect.FindAidocs(".")
 	if aidDir == "" {
@@ -772,6 +904,11 @@ Usage:
     propagate <fn> <error>          Add error return through callers
     [--apply]                       Actually modify files (default: dry-run)
 
+  squire impact [symbols]          Analyze blast radius of changes
+    (no args)                      Analyze uncommitted git changes
+    --staged                       Analyze staged changes only
+    Symbol1 Symbol2 ...            Analyze impact of changing these symbols
+
   squire estimate [args]           Estimate story points from graph analysis
     --plan <file>                  Extract symbols from an implementation plan
     --symbols "Sym1,Sym2"          Explicit symbol list
@@ -785,6 +922,8 @@ Examples:
   squire init                    Set up the current Go/TS/Python/C# project
   squire query callstack Serve --up
   squire refactor rename OldName NewName
+  squire impact                   What did I miss in my current changes?
+  squire impact SnapshotInfo      What breaks if I change this type?
   squire estimate --plan plan.md
   squire estimate Handler NotificationService
 `)
