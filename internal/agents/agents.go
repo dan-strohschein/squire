@@ -129,19 +129,20 @@ func InstallSkills(project *detect.Project) []string {
 
 const claudeSkill = `---
 name: squire
-description: Use squire to query the semantic code graph, understand symbol relationships, and perform precise refactoring. Squire embeds AID documentation, Cartograph graph queries, and Chisel refactoring in a single tool.
-trigger: when you need to understand code relationships, trace call chains, find what depends on a symbol, rename/move/propagate changes across a codebase, or when .aidocs/ directory exists in the project
+description: Use squire to query the semantic code graph, understand symbol relationships, perform precise refactoring, and estimate implementation effort. Squire embeds AID documentation, Cartograph graph queries, and Chisel refactoring in a single tool.
+trigger: when you need to understand code relationships, trace call chains, find what depends on a symbol, rename/move/propagate changes across a codebase, estimate story points or effort for a plan, or when .aidocs/ directory exists in the project
 ---
 
 # Squire — AI Code Assistant Toolkit
 
-Squire provides structured codebase documentation (AID files), a semantic graph query engine (Cartograph), and precise refactoring (Chisel) in a single binary.
+Squire provides structured codebase documentation (AID files), a semantic graph query engine (Cartograph), precise refactoring (Chisel), and effort estimation in a single binary.
 
 ## When to Use Squire
 
 - **Before reading source code**: Check if .aidocs/ exists. If it does, read the .aid file for the relevant package FIRST.
 - **Tracing dependencies**: Use squire query instead of grepping.
 - **Refactoring**: Use squire refactor instead of manual find-and-replace.
+- **Estimating effort**: Use squire estimate to analyze a plan and get a story point size.
 
 ## Read AID Documentation
 
@@ -174,6 +175,57 @@ squire refactor move <symbol> <package>               # move symbol
 squire refactor propagate <function> <error-type>     # add error returns
 ` + "`" + `` + "`" + `` + "`" + `
 
+## Estimate Effort
+
+When the user asks you to estimate effort, story points, or complexity for a plan or feature, follow this two-step process:
+
+### Step 1: Validate the plan for specificity BEFORE running squire
+
+Review the plan text and check: does it name specific types, functions, or interfaces that will change? If not, the plan is too vague to estimate. Ask clarifying questions first.
+
+**Signs of a vague plan (DO NOT submit to squire yet):**
+- Uses only general verbs: "refactor", "clean up", "improve", "fix"
+- Refers to systems by domain name only: "the notification system", "the auth module"
+- No specific type names, function names, or interface names mentioned
+- Could mean many different things depending on interpretation
+
+**When the plan is vague, ask questions like:**
+- "You said 'refactor the notification system' — what specifically should change? Are you restructuring the package layout, changing the NotificationService interface, adding new methods, or cleaning up implementations?"
+- "Which types or services are affected? For example, NotificationServiceImpl, DLQRetryJob, PreferencesService?"
+- "Are you adding new fields, changing function signatures, or moving code between packages?"
+- "What's the end state? What should be different after this work is done?"
+
+Use ` + "`" + `squire query search "<keyword>"` + "`" + ` to help the user find relevant symbols:
+` + "`" + `` + "`" + `` + "`" + `bash
+squire query search "Notification*"    # find notification-related symbols
+squire query list service              # list everything in the service module
+` + "`" + `` + "`" + `` + "`" + `
+
+Share the results with the user to help them name the specific things that will change.
+
+### Step 2: Run squire estimate once the plan names specific symbols
+
+Once the plan references concrete code symbols, run the estimate:
+
+` + "`" + `` + "`" + `` + "`" + `bash
+# Option A: Write the plan to a temp file
+squire estimate --plan /tmp/plan.md
+
+# Option B: Pass symbols directly
+squire estimate NotificationServiceImpl DLQRetryJob Handler
+
+# Machine-readable output:
+squire estimate --plan /tmp/plan.md --format json
+` + "`" + `` + "`" + `` + "`" + `
+
+Report the result to the user including:
+- The T-shirt size (TINY/SMALL/MEDIUM/LARGE/XLARGE)
+- Number of affected files, functions, and packages
+- Any cross-cutting concerns (locks, error maps, antipatterns)
+- Specific complexity factors if present
+
+If squire returns UNCLEAR, relay that to the user and go back to Step 1.
+
 ## Strategy
 
 1. Read .aidocs/manifest.aid to identify relevant packages
@@ -198,6 +250,10 @@ Use squire refactor for precise changes (dry-run by default, --apply to modify):
 - squire refactor move <symbol> <package>
 - squire refactor propagate <fn> <error>
 
+Use squire estimate to size implementation plans:
+- squire estimate --plan plan.md (from a plan file)
+- squire estimate Symbol1 Symbol2 (from explicit symbols)
+
 Run squire generate after code changes to update .aidocs/.
 `
 
@@ -217,6 +273,7 @@ This project uses Squire for AI-readable code documentation in .aidocs/.
 - squire query depends <Type> — find dependents
 - squire query search "<pattern>" — find by name
 - squire refactor rename <old> <new> — preview rename
+- squire estimate --plan plan.md — estimate effort for a plan
 - squire generate — update .aidocs/ after changes
 `
 
