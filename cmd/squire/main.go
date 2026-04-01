@@ -18,6 +18,7 @@ import (
 	"github.com/dan-strohschein/squire/internal/detect"
 	"github.com/dan-strohschein/squire/internal/generate"
 	"github.com/dan-strohschein/squire/internal/refactor"
+	"github.com/dan-strohschein/squire/internal/show"
 	"github.com/dan-strohschein/squire/internal/status"
 	"github.com/dan-strohschein/squire/internal/tools"
 	"github.com/dan-strohschein/squire/internal/version"
@@ -41,6 +42,8 @@ func main() {
 		cmdStatus(args)
 	case "doctor":
 		cmdDoctor(args)
+	case "show":
+		cmdShow(args)
 	case "query":
 		cmdQuery(args)
 	case "refactor":
@@ -370,6 +373,61 @@ func printDoctorSummary(problems, warnings int) {
 		fmt.Printf("No problems. %d warning(s) — run `squire generate` to resolve.\n", warnings)
 	} else {
 		fmt.Println("All checks passed. Your project is ready for AI-assisted development.")
+	}
+}
+
+func cmdShow(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintf(os.Stderr, "Usage: squire show <symbol> [symbol2 ...]\n")
+		fmt.Fprintf(os.Stderr, "Shows the source code of a function, method, or type without reading the entire file.\n")
+		os.Exit(1)
+	}
+
+	aidDir := detect.FindAidocs(".")
+	if aidDir == "" {
+		fmt.Fprintf(os.Stderr, "Error: no .aidocs/ directory found. Run `squire init` first.\n")
+		os.Exit(1)
+	}
+	projectDir := filepath.Dir(aidDir)
+
+	for i, sym := range args {
+		if strings.HasPrefix(sym, "-") {
+			continue
+		}
+
+		results, err := show.Symbol(aidDir, projectDir, sym)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			continue
+		}
+
+		if len(results) > 1 {
+			fmt.Printf("// %d matches for %s:\n", len(results), sym)
+		}
+
+		for j, r := range results {
+			if i > 0 || j > 0 {
+				fmt.Printf("\n// ---\n\n")
+			}
+
+			// Header
+			if r.Purpose != "" {
+				fmt.Printf("// %s\n", r.Purpose)
+			}
+
+			if r.Source != "" {
+				fmt.Println(r.Source)
+				fmt.Printf("\n// Source: %s:%d-%d (%s)\n", r.SourceFile, r.StartLine, r.EndLine, r.Module)
+			} else if r.Signature != "" {
+				fmt.Printf("// %s %s (%s)\n", r.Kind, r.Name, r.Module)
+				fmt.Printf("// sig: %s\n", r.Signature)
+				if r.SourceFile != "" {
+					fmt.Printf("// Source: %s:%d (file not found on disk)\n", r.SourceFile, r.StartLine)
+				} else {
+					fmt.Printf("// (no source location in AID)\n")
+				}
+			}
+		}
 	}
 }
 
@@ -955,6 +1013,7 @@ Usage:
   squire status [dir]            Show what's generated, stale, or missing
   squire doctor                  Verify installation and project health
 
+  squire show <symbol> [...]      Show source code of a function/type (no full file read)
   squire query <command> [args]  Query the semantic graph (embedded cartograph)
     callstack <fn> [--up|--down]   Trace callers or callees
     depends <Type>                 What depends on this type?
