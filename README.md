@@ -59,31 +59,66 @@ Done! Your AI assistant can now use .aidocs/ for structured codebase knowledge.
 
 ## Commands
 
-### For developers
+### Setup & maintenance
 
 | Command | What it does |
 |---------|-------------|
 | `squire init` | Set up AID for this project (detect language, generate, configure) |
 | `squire generate` | Regenerate `.aidocs/` from current source (incremental — only updates changed packages) |
 | `squire status` | Show what's generated, what's stale, what's missing |
-| `squire doctor` | Verify installation and project health |
+| `squire stale` | Check AID claims against current source with detailed per-claim reporting |
+| `squire doctor` | Verify installation, project health, and AID validation |
 | `squire install <tool>` | Install a language-specific generator |
 | `squire upgrade` | Update all installed tools to latest |
 
-### For AI agents
+### Querying the semantic graph
 
 | Command | What it does |
 |---------|-------------|
 | `squire query callstack <fn> --up` | Who calls this function? |
 | `squire query callstack <fn> --down` | What does this function call? |
 | `squire query depends <Type>` | What depends on this type? |
-| `squire query search <pattern>` | Find functions/types by name |
+| `squire query field <Type.Field>` | Who reads or writes this field? |
+| `squire query errors <ErrorType>` | Where is this error produced? |
+| `squire query effects <fn>` | What side effects does this function have? |
+| `squire query search <pattern>` | Find functions/types by name (glob/regex) |
 | `squire query list <module>` | List everything in a module |
+| `squire query stats` | Graph statistics |
+
+### Reading source code
+
+| Command | What it does |
+|---------|-------------|
+| `squire show <symbol>` | Show the source code of a function/type without reading the entire file |
+| `squire excerpt <file>[:sym1,sym2]` | Extract specific symbol bodies from a file |
+
+### Analysis
+
+| Command | What it does |
+|---------|-------------|
+| `squire impact` | Blast radius of uncommitted changes — what you might have missed |
+| `squire impact --staged` | Same, but for staged changes only |
+| `squire impact <Symbol1> <Symbol2>` | What breaks if you change these symbols? |
+| `squire estimate <Symbol1> <Symbol2>` | Estimate story points from graph analysis |
+| `squire estimate --plan <file>` | Extract symbols from a plan file and estimate |
+| `squire digest --from <findings.md>` | Compress session findings into AID-anchored summary |
+
+### Refactoring
+
+| Command | What it does |
+|---------|-------------|
 | `squire refactor rename <old> <new>` | Rename a symbol across the codebase |
 | `squire refactor move <sym> <dest>` | Move a symbol to another package |
 | `squire refactor propagate <fn> <err>` | Add error return through callers |
+| `squire refactor extract <fn> <pkg>` | Extract a function and its private deps to a new package |
 
 All refactor commands default to **dry-run** (preview the diff). Pass `--apply` to modify files.
+
+**Flags:**
+- `--apply` — actually modify files (default: dry-run)
+- `--include-comments` — also rename in comments
+- `--format <unified|json|summary>` — output format
+- `--lsp-cmd "gopls serve"` — use LSP for type-aware refactoring (supports gopls, pyright, rust-analyzer, clangd, typescript-language-server)
 
 ## What gets generated
 
@@ -135,7 +170,9 @@ The skill/rules files teach each AI assistant to:
 1. Read `.aidocs/manifest.aid` first for the package map
 2. Read a package's `.aid` file before reading its source code
 3. Use `squire query` to trace dependencies without reading source
-4. Use `squire refactor` for precise codebase-wide changes
+4. Use `squire show` / `squire excerpt` for targeted source reading
+5. Use `squire refactor` for precise codebase-wide changes
+6. Use `squire impact` / `squire estimate` for change analysis
 
 ### Manual installation
 
@@ -169,9 +206,11 @@ cp skills/windsurfrules.md .windsurfrules
 The Claude Code skill (`.claude/skills/squire.md`) triggers automatically when Claude needs to understand code relationships, trace call chains, or refactor. It teaches Claude to:
 
 - Read AID files before source code (reducing token consumption)
+- Use `squire show <symbol>` to read just the function you need
 - Use `squire query callstack <fn> --up` to find callers instead of grepping
 - Use `squire query depends <Type>` to trace impact of changes
-- Use `squire refactor rename/move/propagate` for precise codebase-wide changes
+- Use `squire refactor rename/move/propagate/extract` for precise codebase-wide changes
+- Use `squire impact` to check blast radius before committing
 - Run `squire generate` after making changes to keep `.aidocs/` current
 
 ## Incremental updates
@@ -191,6 +230,22 @@ Scanning for changes since last generation...
 
 Regenerating...
   ✓ 3 files updated in .aidocs/
+```
+
+For detailed claim-level staleness (which specific `[src:]` references are outdated):
+
+```bash
+$ squire stale
+
+Found 4 stale claim(s) across 2 AID file(s):
+
+server (server.aid):
+  HandleRequest.calls: file changed at server/handler.go:45
+  HandleRequest.effects: lines changed at server/handler.go:52
+
+config (config.aid):
+  Config.Load.sig: file changed at config/loader.go:20
+  Config.Validate.calls: lines changed at config/loader.go:35
 ```
 
 ## Examples
@@ -215,6 +270,41 @@ $ squire query search "Handle*"
     ...
 ```
 
+### Show: read just the function you need
+```bash
+$ squire show Server.Start
+
+// Start the HTTP server
+func (s *Server) Start(addr string) error {
+    if err := s.config.Validate(); err != nil {
+        return fmt.Errorf("invalid config: %w", err)
+    }
+    ...
+}
+
+// Source: server.go:20-45 (internal/server)
+```
+
+### Impact: what did you miss?
+```bash
+$ squire impact
+
+  Changed files: 3
+  Changed symbols: 8
+
+  Blast radius:
+    Functions affected:  23
+    Packages affected:  4 (server, config, handler, middleware)
+
+  ⚠ Potentially missed (5 symbols in 2 files outside your changeset):
+
+    middleware:
+      AuthMiddleware (Function)
+      RateLimiter (Function)
+
+  Risk: ⚠ MEDIUM
+```
+
 ### Refactor: rename across codebase (dry-run)
 ```bash
 $ squire refactor rename EditKind RefactorEditKind
@@ -227,6 +317,13 @@ Modified 2 file(s), 5 edit(s) applied, 1 AID file(s) updated (dry-run)
 +type RefactorEditKind int
 
 Dry run — no files modified. Pass --apply to make changes.
+```
+
+### Refactor: type-aware rename with LSP
+```bash
+$ squire refactor rename Get Fetch --lsp-cmd "gopls serve" --apply
+
+Modified 8 file(s), 23 edit(s) applied, 3 AID file(s) updated
 ```
 
 ### Check project health
@@ -243,6 +340,7 @@ Checking project (github.com/example/myservice — Go)...
   ✓ manifest.aid present
   ✓ AGENTS.md present
   ✓ Semantic graph loads (1,247 nodes, 2,104 call edges)
+  ✓ AID validation: all files pass
   ✓ Coverage: 42/42 packages have AID files
 
 All checks passed. Your project is ready for AI-assisted development.
@@ -251,9 +349,9 @@ All checks passed. Your project is ready for AI-assisted development.
 ## Architecture
 
 Squire is a single Go binary (~4MB) that embeds:
-- The [aidkit](https://github.com/dan-strohschein/aidkit) parser for validation and manifest generation
-- The [Cartograph](https://github.com/dan-strohschein/Cartograph) graph engine for semantic queries
-- The [Chisel](https://github.com/dan-strohschein/chisel) refactoring engine for precise code changes
+- The [aidkit](https://github.com/dan-strohschein/aidkit) library — parser, validator (10 spec rules), discovery protocol, and L2 staleness checking
+- The [Cartograph](https://github.com/dan-strohschein/Cartograph) graph engine — cached loading (~6x faster via gob serialization), semantic queries, search, and lock support
+- The [Chisel](https://github.com/dan-strohschein/chisel) refactoring engine — rename, move, propagate, extract, impact analysis, and lock safety checking
 
 Language-specific generators (`aid-gen-go`, `aid-gen-ts`, etc.) are separate binaries managed by `squire install`.
 
