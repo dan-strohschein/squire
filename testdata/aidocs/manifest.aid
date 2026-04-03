@@ -1,0 +1,11 @@
+@manifest
+@project testproject
+@aid_version 0.1
+@lang go
+
+---
+
+@package testpkg
+@aid_file testpkg.aid
+@purpose Test package for squire unit tests
+@layer skeleton

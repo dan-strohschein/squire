@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/dan-strohschein/aidkit/pkg/parser"
+	"github.com/dan-strohschein/aidkit/pkg/validator"
 	"github.com/dan-strohschein/cartograph/pkg/graph"
 	"github.com/dan-strohschein/cartograph/pkg/loader"
 	"github.com/dan-strohschein/squire/internal/detect"
@@ -118,15 +119,23 @@ func generateGo(project *detect.Project) (*Result, error) {
 		result.Warnings = append(result.Warnings, fmt.Sprintf("manifest generation failed: %v", err))
 	}
 
-	// Validate all generated files
+	// Validate all generated files using aidkit's rule-based validator
 	aids, _ := filepath.Glob(filepath.Join(project.AidDir, "*.aid"))
 	for _, aidPath := range aids {
-		_, warnings, err := parser.ParseFile(aidPath)
+		af, parseWarns, err := parser.ParseFile(aidPath)
 		if err != nil {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("parse error in %s: %v", filepath.Base(aidPath), err))
+			continue
 		}
-		for _, w := range warnings {
+		for _, w := range parseWarns {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %s", filepath.Base(aidPath), w.String()))
+		}
+		// Run spec-level validation rules
+		issues := validator.Validate(af)
+		for _, issue := range issues {
+			if issue.Severity >= validator.SeverityWarning {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %s", filepath.Base(aidPath), issue.String()))
+			}
 		}
 	}
 
@@ -267,7 +276,7 @@ func getGitHash(dir string) string {
 
 // LoadGraphStats loads .aidocs/ into the embedded cartograph graph engine.
 func LoadGraphStats(aidDir string) (*GraphStats, error) {
-	g, err := loader.LoadFromDirectory(aidDir)
+	g, err := loader.LoadFromDirectoryCached(aidDir)
 	if err != nil {
 		return nil, err
 	}

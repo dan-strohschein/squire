@@ -7,8 +7,12 @@ import (
 	"strings"
 
 	"github.com/dan-strohschein/squire/internal/estimate"
+	"github.com/dan-strohschein/squire/internal/digest"
+	"github.com/dan-strohschein/squire/internal/excerpt"
 	"github.com/dan-strohschein/squire/internal/impact"
 
+	"github.com/dan-strohschein/aidkit/pkg/parser"
+	"github.com/dan-strohschein/aidkit/pkg/validator"
 	"github.com/dan-strohschein/chisel/edit"
 	"github.com/dan-strohschein/chisel/patch"
 	"github.com/dan-strohschein/chisel/resolve"
@@ -43,6 +47,12 @@ func main() {
 		cmdDoctor(args)
 	case "show":
 		cmdShow(args)
+	case "excerpt":
+		cmdExcerpt(args)
+	case "digest":
+		cmdDigest(args)
+	case "stale":
+		cmdStale(args)
 	case "query":
 		cmdQuery(args)
 	case "refactor":
@@ -267,6 +277,21 @@ func cmdStatus(args []string) {
 	}
 }
 
+func cmdStale(args []string) {
+	dir := "."
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		dir = args[0]
+	}
+
+	reports, err := resolve.CheckAllStaleness(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Print(resolve.FormatStaleReports(reports))
+}
+
 func cmdDoctor(args []string) {
 	problems := 0
 	warnings := 0
@@ -340,6 +365,35 @@ func cmdDoctor(args []string) {
 	} else {
 		fmt.Printf("  ⚠ Graph failed to load: %v\n", err)
 		warnings++
+	}
+
+	// Validate AID files against spec rules
+	aids, _ := filepath.Glob(filepath.Join(project.AidDir, "*.aid"))
+	errorCount := 0
+	warnCount := 0
+	for _, aidPath := range aids {
+		af, _, parseErr := parser.ParseFile(aidPath)
+		if parseErr != nil {
+			errorCount++
+			continue
+		}
+		for _, issue := range validator.Validate(af) {
+			switch issue.Severity {
+			case validator.SeverityError:
+				errorCount++
+			case validator.SeverityWarning:
+				warnCount++
+			}
+		}
+	}
+	if errorCount > 0 {
+		fmt.Printf("  ⚠ AID validation: %d error(s), %d warning(s) across %d file(s)\n", errorCount, warnCount, len(aids))
+		fmt.Printf("    Run `squire generate` to regenerate, or fix manually\n")
+		warnings++
+	} else if warnCount > 0 {
+		fmt.Printf("  ✓ AID validation: %d warning(s), no errors\n", warnCount)
+	} else {
+		fmt.Printf("  ✓ AID validation: all files pass\n")
 	}
 
 	stale, fresh, missing, _ := status.CheckStaleness(project)
@@ -428,6 +482,104 @@ func cmdShow(args []string) {
 	}
 }
 
+func cmdExcerpt(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintf(os.Stderr, "Usage: squire excerpt <file>[:sym1,sym2] [file2[:sym3]] ...\n")
+		fmt.Fprintf(os.Stderr, "Extracts specific function/type bodies from source files.\n\n")
+		fmt.Fprintf(os.Stderr, "Examples:\n")
+		fmt.Fprintf(os.Stderr, "  squire excerpt service.go:Create,retryOne   Extract two functions\n")
+		fmt.Fprintf(os.Stderr, "  squire excerpt service.go                   All declarations in file\n")
+		fmt.Fprintf(os.Stderr, "  squire excerpt svc.go:Create job.go:Run     Across multiple files\n")
+		os.Exit(1)
+	}
+
+	specs := excerpt.ParseSpecs(args)
+	if len(specs) == 0 {
+		fmt.Fprintf(os.Stderr, "Error: no valid file specs provided\n")
+		os.Exit(1)
+	}
+
+	aidDir := detect.FindAidocs(".")
+	projectDir := "."
+	if aidDir != "" {
+		projectDir = filepath.Dir(aidDir)
+	}
+
+	results, err := excerpt.FromMultipleFiles(specs, aidDir, projectDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Print(excerpt.Format(results))
+}
+
+func cmdDigest(args []string) {
+	var fromPath, taskLabel, outPath string
+
+	var positional []string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--from":
+			if i+1 < len(args) {
+				i++
+				fromPath = args[i]
+			}
+		case "--task":
+			if i+1 < len(args) {
+				i++
+				taskLabel = args[i]
+			}
+		case "--out":
+			if i+1 < len(args) {
+				i++
+				outPath = args[i]
+			}
+		default:
+			if !strings.HasPrefix(args[i], "-") {
+				positional = append(positional, args[i])
+			}
+		}
+	}
+
+	// Allow positional arg as findings path
+	if fromPath == "" && len(positional) > 0 {
+		fromPath = positional[0]
+	}
+
+	if fromPath == "" {
+		fmt.Fprintf(os.Stderr, "Usage: squire digest --from <findings.md> [--task <label>] [--out <path>]\n")
+		fmt.Fprintf(os.Stderr, "Compresses session findings into a compact AID-anchored summary.\n")
+		os.Exit(1)
+	}
+
+	aidDir := detect.FindAidocs(".")
+	if aidDir == "" {
+		fmt.Fprintf(os.Stderr, "Error: no .aidocs/ directory found. Digest requires AID for anchoring.\n")
+		fmt.Fprintf(os.Stderr, "Run `squire init` first.\n")
+		os.Exit(1)
+	}
+
+	result, err := digest.Digest(fromPath, aidDir, taskLabel)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	output := digest.Format(result)
+
+	if outPath != "" {
+		if err := os.WriteFile(outPath, []byte(output), 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing output: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "Digest written to %s (%d anchored, %d unanchored, %d packages)\n",
+			outPath, len(result.Anchored), len(result.Unanchored), len(result.AffectedPkgs))
+	} else {
+		fmt.Print(output)
+	}
+}
+
 func cmdQuery(args []string) {
 	if len(args) == 0 {
 		fmt.Fprintf(os.Stderr, "Usage: squire query <command> [args]\n")
@@ -450,7 +602,7 @@ func cmdQuery(args []string) {
 
 func cmdRefactor(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: squire refactor <rename|move|propagate> <args> [--apply]\n")
+		fmt.Fprintf(os.Stderr, "Usage: squire refactor <rename|move|propagate|extract> <args> [--apply] [--lsp-cmd \"cmd\"]\n")
 		os.Exit(1)
 	}
 
@@ -461,6 +613,7 @@ func cmdRefactor(args []string) {
 	apply := false
 	format := "unified"
 	includeComments := false
+	lspCmd := ""
 	var positional []string
 
 	for i := 0; i < len(remaining); i++ {
@@ -474,6 +627,11 @@ func cmdRefactor(args []string) {
 			}
 		case "--include-comments":
 			includeComments = true
+		case "--lsp-cmd":
+			if i+1 < len(remaining) {
+				i++
+				lspCmd = remaining[i]
+			}
 		default:
 			positional = append(positional, remaining[i])
 		}
@@ -523,13 +681,26 @@ func cmdRefactor(args []string) {
 		intent.Target = positional[0]
 		intent.ErrorType = positional[1]
 
+	case "extract":
+		if len(positional) < 2 {
+			fmt.Fprintf(os.Stderr, "Usage: squire refactor extract <function> <new-package> [--apply]\n")
+			os.Exit(1)
+		}
+		intent.Kind = resolve.Extract
+		intent.Target = positional[0]
+		intent.Destination = positional[1]
+
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown refactor command: %s\nAvailable: rename, move, propagate\n", subcmd)
+		fmt.Fprintf(os.Stderr, "Unknown refactor command: %s\nAvailable: rename, move, propagate, extract\n", subcmd)
 		os.Exit(1)
 	}
 
-	// Phase 1: Resolve — use embedded cartograph
-	querier := &refactor.EmbeddedGraphQuerier{}
+	// Phase 1: Resolve — use chisel's embedded cartograph querier
+	querier, qErr := refactor.NewGraphQuerier(aidDir)
+	if qErr != nil {
+		fmt.Fprintf(os.Stderr, "Error loading graph: %v\n", qErr)
+		os.Exit(1)
+	}
 	resolver := &resolve.Resolver{Graph: querier}
 
 	resolution, err := resolver.Resolve(intent)
@@ -538,8 +709,24 @@ func cmdRefactor(args []string) {
 		os.Exit(1)
 	}
 
-	// Phase 2: Generate edits (no LSP for now — use null resolver)
+	// Check lock safety — warn if refactoring touches lock-guarded code
+	lockWarnings := resolve.CheckLockSafety(querier, intent.Target)
+	for _, w := range lockWarnings {
+		fmt.Fprintf(os.Stderr, "⚠ Lock safety: %s\n", w)
+	}
+
+	// Phase 2: Generate edits — use LSP for type-aware resolution if available
 	var typeResolver resolve.TypeResolver = &resolve.NullResolver{}
+	if lspCmd != "" {
+		parts := strings.Fields(lspCmd)
+		lspResolver, lspErr := resolve.NewLSPResolver(parts[0], parts[1:], sourceDir)
+		if lspErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: LSP resolver failed to start: %v (falling back to heuristic)\n", lspErr)
+		} else {
+			typeResolver = lspResolver
+			defer lspResolver.Close()
+		}
+	}
 	editSet, err := edit.GenerateEdits(resolution, typeResolver)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error generating edits: %v\n", err)
@@ -923,9 +1110,9 @@ func cmdUpgrade() {
 
 func cmdVersion() {
 	fmt.Printf("squire %s\n", version.Version)
-	fmt.Printf("  cartograph: embedded\n")
-	fmt.Printf("  chisel: embedded\n")
-	fmt.Printf("  aidkit parser: embedded\n")
+	fmt.Printf("  cartograph: embedded (cached loading, search, lock support)\n")
+	fmt.Printf("  chisel: embedded (rename, move, propagate, extract, impact, lock safety)\n")
+	fmt.Printf("  aidkit: embedded (parser, validator, discovery, L2 staleness)\n")
 
 	installed := tools.ListInstalled()
 	if len(installed) > 0 {
@@ -950,6 +1137,8 @@ Usage:
   squire doctor                  Verify installation and project health
 
   squire show <symbol> [...]      Show source code of a function/type (no full file read)
+  squire excerpt <file>[:syms]   Extract specific symbols from a file (compact output)
+  squire digest --from <file>    Compress session findings into AID-anchored summary
   squire query <command> [args]  Query the semantic graph (embedded cartograph)
     callstack <fn> [--up|--down]   Trace callers or callees
     depends <Type>                 What depends on this type?
@@ -957,11 +1146,15 @@ Usage:
     list <module>                  List everything in a module
     stats                          Graph statistics
 
+  squire stale [dir]               Check AID claims against current source (detailed)
+
   squire refactor <command> [args]  Semantic refactoring (embedded chisel)
     rename <old> <new>              Rename a symbol across the codebase
     move <symbol> <dest>            Move a symbol to another package
     propagate <fn> <error>          Add error return through callers
+    extract <fn> <new-pkg>          Extract function and deps to new package
     [--apply]                       Actually modify files (default: dry-run)
+    [--lsp-cmd "gopls serve"]       Use LSP for type-aware refactoring
 
   squire impact [symbols]          Analyze blast radius of changes
     (no args)                      Analyze uncommitted git changes

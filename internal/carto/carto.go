@@ -19,7 +19,7 @@ func Run(aidDir string, args []string) error {
 		return fmt.Errorf("no command specified")
 	}
 
-	g, err := loader.LoadFromDirectory(aidDir)
+	g, err := loader.LoadFromDirectoryCached(aidDir)
 	if err != nil {
 		return fmt.Errorf("loading AID files: %w", err)
 	}

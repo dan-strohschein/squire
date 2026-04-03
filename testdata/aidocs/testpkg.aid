@@ -1,0 +1,84 @@
+@module testpkg
+@lang go
+@version 0.1.0
+@code_version git:abc1234
+@purpose Test package for squire unit tests
+
+---
+
+@type Config
+@kind struct
+@purpose Application configuration
+@fields
+  Port: int — HTTP listen port
+  Debug: bool — Enable debug logging
+@methods Load, Validate
+
+---
+
+@fn Config.Load
+@purpose Load configuration from environment
+@sig () -> (*Config, error)
+@source_file testpkg/config.go
+@source_line 15
+@effects Env
+
+---
+
+@fn Config.Validate
+@purpose Validate configuration values
+@sig () -> error
+@source_file testpkg/config.go
+@source_line 35
+
+---
+
+@type Server
+@kind struct
+@purpose HTTP server wrapper
+@fields
+  config: *Config — Server configuration
+  handler: http.Handler — Request handler
+@methods Start, Stop, HandleRequest
+
+---
+
+@fn Server.Start
+@purpose Start the HTTP server
+@sig (addr string) -> error
+@calls [Config.Validate, Server.HandleRequest]
+@source_file testpkg/server.go
+@source_line 20
+@effects Net
+
+---
+
+@fn Server.Stop
+@purpose Gracefully shut down the server
+@sig () -> error
+@source_file testpkg/server.go
+@source_line 45
+
+---
+
+@fn Server.HandleRequest
+@purpose Handle an incoming HTTP request
+@sig (w http.ResponseWriter, r *http.Request) -> None
+@calls [Config.Load]
+@source_file testpkg/server.go
+@source_line 60
+
+---
+
+@fn NewServer
+@purpose Create a new Server instance
+@sig (cfg *Config) -> *Server
+@calls [Config.Validate]
+@source_file testpkg/server.go
+@source_line 10
+
+---
+
+@invariants
+@purpose Concurrency rules
+@rule All Server methods must be safe for concurrent use

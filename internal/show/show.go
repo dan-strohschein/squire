@@ -28,7 +28,7 @@ type Result struct {
 
 // Symbol looks up a symbol in the graph and extracts its source code.
 func Symbol(aidDir, projectDir string, symbolName string) ([]Result, error) {
-	g, err := loader.LoadFromDirectory(aidDir)
+	g, err := loader.LoadFromDirectoryCached(aidDir)
 	if err != nil {
 		return nil, fmt.Errorf("loading graph: %w", err)
 	}
@@ -69,7 +69,7 @@ func Symbol(aidDir, projectDir string, symbolName string) ([]Result, error) {
 		}
 
 		// Resolve the source file path
-		srcPath := resolveSourcePath(node.SourceFile, projectDir)
+		srcPath := ResolveSourcePath(node.SourceFile, projectDir)
 		if srcPath == "" {
 			results = append(results, Result{
 				Name:       node.Name,
@@ -84,7 +84,7 @@ func Symbol(aidDir, projectDir string, symbolName string) ([]Result, error) {
 		}
 
 		// Extract the function/type body from source
-		source, endLine, err := extractBlock(srcPath, node.SourceLine)
+		source, endLine, err := ExtractBlock(srcPath, node.SourceLine)
 		if err != nil {
 			continue
 		}
@@ -109,9 +109,9 @@ func Symbol(aidDir, projectDir string, symbolName string) ([]Result, error) {
 	return results, nil
 }
 
-// extractBlock reads a function or type definition starting at startLine.
+// ExtractBlock reads a function or type definition starting at startLine.
 // It uses brace counting to find where the block ends.
-func extractBlock(filePath string, startLine int) (string, int, error) {
+func ExtractBlock(filePath string, startLine int) (string, int, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return "", 0, err
@@ -185,8 +185,8 @@ func extractBlock(filePath string, startLine int) (string, int, error) {
 	return strings.Join(lines, "\n"), endLine, nil
 }
 
-// resolveSourcePath tries to find the actual file on disk.
-func resolveSourcePath(sourceFile, projectDir string) string {
+// ResolveSourcePath tries to find the actual file on disk.
+func ResolveSourcePath(sourceFile, projectDir string) string {
 	// Try as-is (relative to project)
 	p := filepath.Join(projectDir, sourceFile)
 	if _, err := os.Stat(p); err == nil {

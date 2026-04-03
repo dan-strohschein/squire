@@ -67,7 +67,7 @@ func FromFiles(projectDir, aidDir string, files []string) (*Result, error) {
 
 // FromSymbols analyzes the impact of changing specific symbols.
 func FromSymbols(aidDir string, symbols []string) (*Result, error) {
-	g, err := loader.LoadFromDirectory(aidDir)
+	g, err := loader.LoadFromDirectoryCached(aidDir)
 	if err != nil {
 		return nil, fmt.Errorf("loading graph: %w", err)
 	}
@@ -105,7 +105,7 @@ func FromSymbols(aidDir string, symbols []string) (*Result, error) {
 }
 
 func analyzeChangedFiles(projectDir, aidDir string, changedFiles []string) (*Result, error) {
-	g, err := loader.LoadFromDirectory(aidDir)
+	g, err := loader.LoadFromDirectoryCached(aidDir)
 	if err != nil {
 		return nil, fmt.Errorf("loading graph: %w", err)
 	}

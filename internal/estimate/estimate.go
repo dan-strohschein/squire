@@ -48,7 +48,7 @@ type EstimateResult struct {
 
 // FromSymbols estimates complexity from explicit symbol names.
 func FromSymbols(aidDir string, symbols []string) (*EstimateResult, error) {
-	g, err := loader.LoadFromDirectory(aidDir)
+	g, err := loader.LoadFromDirectoryCached(aidDir)
 	if err != nil {
 		return nil, fmt.Errorf("loading graph: %w", err)
 	}
@@ -95,7 +95,7 @@ func FromPlan(aidDir string, planPath string) (*EstimateResult, error) {
 		return nil, fmt.Errorf("reading plan: %w", err)
 	}
 
-	g, err := loader.LoadFromDirectory(aidDir)
+	g, err := loader.LoadFromDirectoryCached(aidDir)
 	if err != nil {
 		return nil, fmt.Errorf("loading graph: %w", err)
 	}
